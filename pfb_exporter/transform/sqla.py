@@ -1,26 +1,99 @@
 """
-Transform SQLAlchemy Models to Gen3 Data Dictionary
+Transform SQLAlchemy Models to PFB Schema
 """
 import os
 import logging
 import inspect
+import subprocess
+import timeit
 from pprint import pprint, pformat
 
 from sqlalchemy.inspection import inspect as sqla_inspect
 from sqlalchemy.exc import NoInspectionAvailable
 from sqlalchemy.ext.declarative.api import DeclarativeMeta
 
-from pfb_exporter.utils import import_module_from_file
+from pfb_exporter.utils import import_module_from_file, seconds_to_hms
 from pfb_exporter.transform.base import Transformer
 
 
 class SqlaTransformer(Transformer):
 
-    def __init__(self, models_filepath, output_dir):
+    def __init__(self, models_filepath, output_dir, db_conn_url=None):
+        """
+        Constructor
+
+        :param models_filepath: path to where the SQLAlchemy models are stored
+        or will be written if they are generated
+        :type models_filepath: str
+        :param output_dir: path where PFB Schema will be written
+        :type output_dir: str
+        :param db_conn_url: Connection URL for database. Format depends on
+        database. See SQLAlchemy documentation for supported databases
+        """
+
         super().__init__(models_filepath, output_dir)
         self.logger = logging.getLogger(type(self).__name__)
+        self.db_conn_url = db_conn_url
         self.data_dict = {}
         self.model_dict = {}
+
+    def _transform(self):
+        """
+        Entry point for PFB schema generation.
+
+        Called by pfb_exporter.transform.base.Transformer
+
+        1. (Optional) Generate SQLAlchemy models from database
+        2. Import model classes from dir or file
+        2. Transform SQLAlchemy models to PFB Schema
+        """
+        self.logger.info('Build PFB Schema from SqlAlchemy models')
+
+        if self.db_conn_url:
+            self._generate_models()
+
+        self._import_models()
+
+        if not (self.db_conn_url or self.model_dict):
+            raise RuntimeError(
+                'There are 0 models to generate the PFB file. You must '
+                'provide a DB connection URL that can be used to '
+                'connect to a database to generate the models or '
+                'provide a dir or file path to where the models reside'
+            )
+
+        self._create_pfb_schema()
+
+        return {}
+
+    def _generate_models(self):
+        """
+        Generate SQLAlchemy models from database
+
+        Uses sqlacodegen CLI to generate models
+        See https://github.com/agronholm/sqlacodegen
+        """
+        # sqlacodegen requires the models to be written to a file
+        if os.path.isdir(self.models_filepath):
+            self.models_filepath = os.path.join(
+                self.models_filepath, 'models.py'
+            )
+
+        # Generate SQLAlchemy models
+        cmd_str = (
+            f'sqlacodegen {self.db_conn_url} --outfile {self.models_filepath}'
+        )
+        self.logger.debug(f'Building SQLAlchemy models:\n{cmd_str}')
+
+        start_time = timeit.default_timer()
+        output = subprocess.run(
+            cmd_str, shell=True, stdout=subprocess.PIPE
+        )
+        total_time = timeit.default_timer() - start_time
+
+        output.check_returncode()
+
+        self.logger.debug(f'Time elapsed: {seconds_to_hms(total_time)}')
 
     def _import_models(self):
         """
@@ -82,13 +155,5 @@ class SqlaTransformer(Transformer):
             f'\n{pformat(list(self.model_dict.keys()))}'
         )
 
-    def _build_data_dict(self):
-        self.logger.info('Build Gen3 data dictionary from SqlAlchemy models')
-
-        self._import_models()
-        for model_cls_name, model_cls in self.model_dict.items():
-            self._model_to_data_dict()
-        return {}
-
-    def _model_to_data_dict(self, model_cls, data_dict):
+    def _create_pfb_schema(self):
         pass

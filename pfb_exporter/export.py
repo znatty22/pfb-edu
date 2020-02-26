@@ -1,38 +1,41 @@
 """
-Create a PFB (Portable Bioinformatics Format) to compress and serialize data
-from a relational database
+Export biomedical data from a relational database to an Avro file.
 
-A PFB file is actually just an Avro file with a particular schema suited to
-capture relational data and reconstruct a relational database from it.
+An Avro file stores the data schema as a JSON blob and the data in a
+binary format
 
-PFB creation consists of a few steps:
+See https://avro.apache.org for details
 
-1. Create a Gen3 data dictionary which represents the relational model that the
-data conforms to
+In this case, the Avro file is called a PFB
+(Portable Format for Bioinformatics) file because the data in the Avro file
+conforms to the PFB schema, which is a graph structure suitable for capturing
+relational data.
 
-2. Add the data dictionary to the PFB file
+PFB file creations involves the following steps:
 
-3. Add the JSON data to the PFB file. The data must conform to the data
-dictionary
+1. Create a PFB schema to represent the relational database
+2. Transform the data from the relational database into the graph form
+3. Add the PFB schema to the Avro file as an Avro schema
+4. Add the transformed graph data to the Avro file as data records
 
-The first step is accomplished by the PfbExporter's transformer and the
-second two steps are executed by the PfbExporter.export method.
+Supported Databases:
+- Any of the databases supported by SQLAlchemy since the SQLAlchemy ORM
+is used to inspect the database and autogenerate the SQLAlchemy models
+which are in turn used to create the PFB Schema.
 """
 import os
 import logging
-import subprocess
-import timeit
 
 from pfb_exporter.config import (
     DEFAULT_OUTPUT_DIR,
     DEFAULT_PFB_FILE,
-    DEFAULT_AVRO_SCHEMA_FILE
+    DEFAULT_MODELS_PATH,
+    DEFAULT_TRANFORM_MOD
 )
 from pfb_exporter.utils import (
     import_module_from_file,
     import_subclass_from_module,
-    setup_logger,
-    seconds_to_hms
+    setup_logger
 )
 from pfb_exporter.transform.base import Transformer
 
@@ -40,7 +43,11 @@ from pfb_exporter.transform.base import Transformer
 class PfbExporter(object):
 
     def __init__(
-        self, models_filepath, data_dir, transform_module_filepath,
+        self,
+        data_dir,
+        db_conn_url=None,
+        models_filepath=DEFAULT_MODELS_PATH,
+        transform_module_filepath=DEFAULT_TRANFORM_MOD,
         output_dir=DEFAULT_OUTPUT_DIR
     ):
         setup_logger(os.path.join(output_dir, 'logs'))
@@ -50,13 +57,10 @@ class PfbExporter(object):
         )
         self.data_dir = os.path.abspath(os.path.expanduser(data_dir))
         self.output_dir = os.path.abspath(os.path.expanduser(output_dir))
-        # Temporary file to write the avro schema to
-        self.avro_schema_file = os.path.join(
-            output_dir, DEFAULT_AVRO_SCHEMA_FILE
-        )
-        # Output PFB file
+
         self.pfb_file = os.path.join(output_dir, DEFAULT_PFB_FILE)
-        # Relational model to Gen3 data dict transformer
+
+        # Relational model to PFB Schema transformer
         self.transformer = None
 
         # Import transformer subclass class from transform module
@@ -71,7 +75,7 @@ class PfbExporter(object):
             )
         else:
             self.transformer = child_classes[0](
-                self.models_filepath, self.output_dir
+                self.models_filepath, self.output_dir, db_conn_url=db_conn_url
             )
 
     def export(self, output_to_pfb=True):
@@ -79,18 +83,18 @@ class PfbExporter(object):
         Create a PFB file containing JSON payloads which conform to a
         relational model
 
-        - Transform the relational model into a Gen3 data dictionary
-        - Add data dictionary to PFB file (become PFB schema)
-        - Add JSON payloads to PFB file (becomes PFB data)
+        - Transform the relational model into a PFB Schema
+        - Transform the data into PFB Entities
+        - Create an Avro file with the PFB schema and Entities
 
         :param output_to_pfb: whether to complete the export after transforming
-        the relational model to the data dictionary
+        the relational model to the PFB schema
         :type output_to_pfb: bool
         """
         try:
-            # Transform relational model to data dictionary
+            # Transform relational model to PFB Schema
             self.transformer.transform()
-            # Create the PFB file from the data dictionary and data
+            # Create the PFB file from the PFB Schema and data
             if output_to_pfb:
                 self._create_pfb()
         except Exception as e:
@@ -101,51 +105,10 @@ class PfbExporter(object):
             self.logger.info(
                 f'✅ Export to PFB file {self.pfb_file} succeeded!'
             )
-        finally:
-            if os.path.isfile(self.avro_schema_file):
-                os.remove(self.avro_schema_file)
 
     def _create_pfb(self):
         """
-        Create a PFB file from a Gen3 data dictionary and JSON payloads
+        Create a PFB file from a Gen3 PFB Schema and JSON payloads
         """
         # Add schema to temporary avro file
-        self.logger.info(
-            f'Add data dict in {self.transformer.data_dict_file} to '
-            f'pfb file {self.avro_schema_file}'
-        )
-        invoke_pfb_cmd(
-            self.logger,
-            f'from -o {self.avro_schema_file} dict '
-            f'{self.transformer.data_dict_file}'
-        )
-        # Add data to PFB file
-        self.logger.info(
-            f'Add data in {self.data_dir} to '
-            f'pfb file {self.pfb_file}'
-        )
-        invoke_pfb_cmd(
-            self.logger,
-            f'from -o {self.pfb_file} json '
-            f'-s {self.avro_schema_file} '
-            '--program "Kids First" --project "DRC" '
-            f'{self.data_dir}'
-        )
-
-
-def invoke_pfb_cmd(logger, cmd_str):
-    """
-    Invoke PFB CLI with the command and args specified in cmd_str
-    """
-    cmd_str = f'pfb {cmd_str}'
-    logger.debug(f'Invoking PFB with:\n{cmd_str}')
-
-    start_time = timeit.default_timer()
-    output = subprocess.run(
-        cmd_str, shell=True, stdout=subprocess.PIPE
-    )
-    total_time = timeit.default_timer() - start_time
-
-    output.check_returncode()
-
-    logger.debug(f'Time elapsed: {seconds_to_hms(total_time)}')
+        pass
