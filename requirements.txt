@@ -4,3 +4,4 @@ Click>=7.0
 pypfb
 sqlacodegen
 psycopg2
+SQLAlchemy
