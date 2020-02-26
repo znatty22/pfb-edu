@@ -2,6 +2,7 @@ import datetime
 import logging
 import logging.handlers
 import importlib
+import inspect
 import time
 import os
 
@@ -107,3 +108,19 @@ def import_module_from_file(filepath):
     imported_module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(imported_module)
     return imported_module
+
+
+def import_subclass_from_module(parent_cls, imported_module):
+    """
+    Import class(es) from the Python module `imported_module` if
+    it is a subclass of a parent class, `parent_cls`
+    """
+    child_classes = []
+    for cls_name, cls_path in inspect.getmembers(
+            imported_module, inspect.isclass):
+        if cls_name != parent_cls.__name__:
+            child_cls = getattr(imported_module, cls_name)
+            if issubclass(child_cls, parent_cls):
+                child_classes.append(child_cls)
+
+    return child_classes

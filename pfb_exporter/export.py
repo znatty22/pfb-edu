@@ -19,7 +19,6 @@ The first step is accomplished by the PfbExporter's transformer and the
 second two steps are executed by the PfbExporter.export method.
 """
 import os
-import inspect
 import logging
 import subprocess
 import timeit
@@ -31,6 +30,7 @@ from pfb_exporter.config import (
 )
 from pfb_exporter.utils import (
     import_module_from_file,
+    import_subclass_from_module,
     setup_logger,
     seconds_to_hms
 )
@@ -40,12 +40,14 @@ from pfb_exporter.transform.base import Transformer
 class PfbExporter(object):
 
     def __init__(
-        self, model_dir, data_dir, transform_module_filepath,
+        self, models_filepath, data_dir, transform_module_filepath,
         output_dir=DEFAULT_OUTPUT_DIR
     ):
         setup_logger(os.path.join(output_dir, 'logs'))
         self.logger = logging.getLogger(type(self).__name__)
-        self.model_dir = os.path.abspath(os.path.expanduser(model_dir))
+        self.models_filepath = os.path.abspath(
+            os.path.expanduser(models_filepath)
+        )
         self.data_dir = os.path.abspath(os.path.expanduser(data_dir))
         self.output_dir = os.path.abspath(os.path.expanduser(output_dir))
         # Temporary file to write the avro schema to
@@ -57,26 +59,19 @@ class PfbExporter(object):
         # Relational model to Gen3 data dict transformer
         self.transformer = None
 
-        # Import transformer class from transform module
-        base_class_path = 'pfb_exporter.transform.base.Transformer'
+        # Import transformer subclass class from transform module
         mod = import_module_from_file(transform_module_filepath)
-        for cls_name, path in inspect.getmembers(mod, inspect.isclass):
-            if cls_name == Transformer.__name__:
-                continue
-            tr_child_class = getattr(mod, cls_name)
-            # Create instance of transformer class if it is valid -
-            # extends the ABC base Transformer
-            if issubclass(tr_child_class, Transformer):
-                self.transformer = tr_child_class(
-                    self.model_dir, self.output_dir
-                )
-                break
+        child_classes = import_subclass_from_module(Transformer, mod)
 
-        if not self.transformer:
+        if not child_classes:
             raise NotImplementedError(
                 f'Transform module {transform_module_filepath} must implement '
                 f'a class which extends the abstract base class '
-                f'`{base_class_path}`'
+                f'{os.path.abspath(mod.__file__)}. + {Transformer.__name__}'
+            )
+        else:
+            self.transformer = child_classes[0](
+                self.models_filepath, self.output_dir
             )
 
     def export(self, output_to_pfb=True):

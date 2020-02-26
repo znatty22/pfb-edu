@@ -37,7 +37,7 @@ def common_args_options(func):
         default=DEFAULT_TRANFORM_MOD,
         type=click.Path(exists=True, file_okay=True, dir_okay=False))(func)
     func = click.argument(
-        'model_dir',
+        'models_filepath',
         type=click.Path(exists=True, file_okay=True, dir_okay=True))(func)
 
     return func
@@ -47,26 +47,27 @@ def common_args_options(func):
 @common_args_options
 @click.argument('data_dir',
                 type=click.Path(exists=True, file_okay=True, dir_okay=True))
-def export(data_dir, model_dir, transform_module, output_dir):
+def export(data_dir, models_filepath, transform_module, output_dir):
     """
     Export Kids First data to PFB (Portable Bioinformatics Format)
 
     \b
     Arguments:
         \b
-        model_dir - Path to directory or file containing the SQLAlchemy
+        models_filepath - Path to directory or file containing the SQLAlchemy
         relational model
 
         data_dir - Path to directory containing the JSON payloads which
         conform to the SQLAlchemy models.
     """
-    print(model_dir, data_dir)
-    PfbExporter(model_dir, data_dir, transform_module, output_dir).export()
+    PfbExporter(
+        models_filepath, data_dir, transform_module, output_dir
+    ).export()
 
 
 @click.command()
 @common_args_options
-def transform(model_dir, transform_module, output_dir):
+def transform(models_filepath, transform_module, output_dir):
     """
     Transform Kids First relational model into a Gen3 data dictionary, which
     is a required input for PFB file creation.
@@ -74,7 +75,7 @@ def transform(model_dir, transform_module, output_dir):
     \b
     Arguments:
         \b
-        model_dir - Path to directory or file containing the sqlalchemy
+        models_filepath - Path to directory or file containing the sqlalchemy
         models
 
         data_dir - Path to directory containing the JSON payloads which
@@ -82,7 +83,7 @@ def transform(model_dir, transform_module, output_dir):
     """
 
     PfbExporter(
-        model_dir, '', transform_module, output_dir
+        models_filepath, '', transform_module, output_dir
     ).export(output_to_pfb=False)
 
 
