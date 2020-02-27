@@ -1,3 +1,0 @@
-project
-family
-participant
