@@ -2,21 +2,22 @@
 Transform SQLAlchemy Models to PFB Schema
 """
 import os
+import json
 import logging
 import inspect
 import subprocess
+from copy import deepcopy
 from collections import defaultdict
 import timeit
-from pprint import pformat
+from pprint import pformat, pprint
 
-from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.inspection import inspect as sqla_inspect
 from sqlalchemy.orm.properties import ColumnProperty
 from sqlalchemy.ext.declarative.api import DeclarativeMeta
 from sqlalchemy.exc import NoInspectionAvailable
 
+from pfb_exporter.config import DEFAULT_PFB_SCHEMA_FILE
 from pfb_exporter.utils import import_module_from_file, seconds_to_hms
-from pfb_exporter.transform.base import Transformer
 
 SQLA_AVRO_TYPE_MAP = {
     'primitive': {
@@ -35,12 +36,17 @@ SQLA_AVRO_TYPE_MAP = {
 }
 
 
-class SqlaTransformer(Transformer):
+class SqlaTransformer(object):
 
-    def __init__(self, models_filepath, output_dir, db_conn_url=None):
+    def __init__(
+            self, data_dir, models_filepath, output_dir, db_conn_url=None
+    ):
         """
         Constructor
 
+        :param data_dir: path to the JSON data which conforms to the SQLAlchemy
+        model
+        :type data_dir: str
         :param models_filepath: path to where the SQLAlchemy models are stored
         or will be written if they are generated
         :type models_filepath: str
@@ -49,24 +55,25 @@ class SqlaTransformer(Transformer):
         :param db_conn_url: Connection URL for database. Format depends on
         database. See SQLAlchemy documentation for supported databases
         """
-
-        super().__init__(models_filepath, output_dir)
         self.logger = logging.getLogger(type(self).__name__)
+        self.data_dir = data_dir
+        self.models_filepath = models_filepath
+        self.output_dir = output_dir
         self.db_conn_url = db_conn_url
         self.data_dict = {}
         self.model_dict = {}
 
-    def _transform(self):
+    def create_schema(self):
         """
-        Entry point for PFB schema generation.
-
-        Called by pfb_exporter.transform.base.Transformer
+        Transform SQLAlchemy models into a PFB Schema.
 
         1. (Optional) Generate SQLAlchemy models from database
         2. Import model classes from dir or file
         2. Transform SQLAlchemy models to PFB Schema
         """
-        self.logger.info('Build PFB Schema from SqlAlchemy models')
+        self.logger.info(
+            'BEGIN transformation from relational model to PFB Schema '
+        )
 
         if self.db_conn_url:
             self._generate_models()
@@ -81,7 +88,20 @@ class SqlaTransformer(Transformer):
                 'provide a dir or file path to where the models reside'
             )
 
-        return self._create_pfb_schema()
+        pfb_schema = self._create_pfb_schema()
+        self._write_pfb_schema(pfb_schema)
+
+        self.logger.info(
+            'END transformation from relational model to PFB Schema'
+        )
+
+        return pfb_schema
+
+    def create_entities(self):
+        """
+        Transform relational data into PFB Entities
+        """
+        return {}
 
     def _generate_models(self):
         """
@@ -115,7 +135,7 @@ class SqlaTransformer(Transformer):
     def _import_models(self):
         """
         Import the SQLAlchemy model classes from the Python modules
-        in models_filepath
+        in self.models_filepath
         """
         self.logger.debug(
             f'Importing SQLAlchemy models from {self.models_filepath}'
@@ -127,11 +147,8 @@ class SqlaTransformer(Transformer):
             """
             imported_model_classes = []
             mod = import_module_from_file(filepath)
-            # NOTE - We cannot use
-            # pfb_exporter.utils.import_subclass_from_module here because
-            # we are unable to use issubclass to test if the SQLAlchemy model
-            # class is a subclass of its parent
-            # (sqlalchemy.ext.declarative.api.Base)
+            # NOTE - We cannot use issubclass to test if the SQLAlchemy model
+            # class is a subclass of its parent (sqlalchemy.ext.declarative.api.Base) # noqa E5501
             # The best we can do is make sure the class is a SQLAlchemy object
             # and check that the object is a DeclarativeMeta type
             for cls_name, cls_path in inspect.getmembers(mod, inspect.isclass):
@@ -177,56 +194,90 @@ class SqlaTransformer(Transformer):
         Transform SQLAlchemy models into PFB schema
         """
         self.logger.info('Creating PFB schema from SQLAlchemy models ...')
+        model_schema_template = defaultdict(list)
         relational_model = {}
 
         for model_name, model_cls in self.model_dict.items():
             self.logger.info(
                 f'Building schema for {model_name} ...'
             )
+            model_schema = deepcopy(model_schema_template)
             # Inspect model columns and types
             for p in sqla_inspect(model_cls).iterate_properties:
-                model_schema = defaultdict(list)
-
                 if not isinstance(p, ColumnProperty):
                     continue
 
                 if not hasattr(p, 'columns'):
                     continue
 
-                column_obj = p.columns[0]
+                schema_dict = self._column_obj_to_schema_dict(
+                    p.key, p.columns[0]
+                )
+                if schema_dict['type'] == 'foreign_key':
+                    model_schema['foreign_keys'] = schema_dict
+                else:
+                    model_schema['attributes'].append(schema_dict)
 
-                # Check if foreign key
-                if column_obj.foreign_keys:
-                    fkname = column_obj.foreign_keys.pop().target_fullname
-                    model_schema['foreign_keys'].append(
-                        {'table': fkname.split('.')[0], 'name': p.key}
-                    )
-
-                # Convert SQLAlchemy column type to avro type
-                stype = type(column_obj.type).__name__
-                # Get avro primitive type
-                ptype = SQLA_AVRO_TYPE_MAP['primitive'].get(stype)
-                if not ptype:
-                    self.logger.warn(
-                        f'⚠️ Could not find avro type for {p}, '
-                        f'SQLAlchemy type: {stype}'
-                    )
-                attr_dict = {'name': p.key, 'type': ptype}
-
-                # Get avro logical type if applicable
-                ltype = SQLA_AVRO_TYPE_MAP['logical'].get(stype)
-                if ltype:
-                    attr_dict.update({'logicalType': ltype})
-
-                # Get default value for attr
-                # if column_obj.default:
-                #     attr_dict.update({'default': column_obj.default})
-
-                # if column_obj.nullable:
-                #     attr_dict.update({'nullable': column_obj.nullable})
-
-                model_schema['attributes'].append(attr_dict)
-
+            self.logger.debug(f'{pformat(model_schema)}')
             relational_model[model_cls.__tablename__] = model_schema
 
         return relational_model
+
+    def _column_obj_to_schema_dict(self, key, column_obj):
+        """
+        Convert a SQLAlchemy Column object to a schema dict
+        """
+        # Check if foreign key
+        if column_obj.foreign_keys:
+            fkname = column_obj.foreign_keys.pop().target_fullname
+            return {
+                'relation': fkname.split('.')[0],
+                'name': key,
+                'type': 'foreign_key'
+            }
+
+        # Convert SQLAlchemy column type to avro type
+        stype = type(column_obj.type).__name__
+
+        # Get avro primitive type
+        ptype = SQLA_AVRO_TYPE_MAP['primitive'].get(stype)
+        if not ptype:
+            self.logger.warning(
+                f'⚠️ Could not find avro type for {key}, '
+                f'SQLAlchemy type: {stype}'
+            )
+        attr_dict = {'name': key, 'type': ptype}
+
+        # Get avro logical type if applicable
+        ltype = SQLA_AVRO_TYPE_MAP['logical'].get(stype)
+        if ltype:
+            attr_dict.update({'logicalType': ltype})
+
+        # Get default value for attr
+        # if column_obj.default:
+        #     attr_dict.update({'default': column_obj.default})
+
+        if column_obj.nullable:
+            attr_dict['type'] = ['null', attr_dict['type']]
+
+        return attr_dict
+
+    def _write_pfb_schema(self, data):
+        """
+        Write the Gen3 data dictionary created by self.transform to the
+        output_dir as a set of yaml files. There will be one YAML file per
+        entity
+
+        :param data: data needed to write out the Gen3 data dict files
+        :type data: dict
+        :returns: path to directory containing data dict files
+        """
+        self.pfb_schema = os.path.join(
+            self.output_dir, DEFAULT_PFB_SCHEMA_FILE
+        )
+        if data:
+            self.logger.info(
+                f'✏️ Writing PFB schema to {self.pfb_schema}'
+            )
+            with open(self.pfb_schema, 'w') as json_file:
+                json.dump(data, json_file, indent=4, sort_keys=True)

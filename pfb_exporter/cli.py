@@ -1,5 +1,5 @@
 """
-Entry point for the Kids First PFB Exporter
+Entry point for the PFB Exporter
 """
 
 import click
@@ -10,7 +10,7 @@ from pfb_exporter.config import (
     DEFAULT_OUTPUT_DIR,
     DEFAULT_MODELS_PATH
 )
-from pfb_exporter.export import PfbExporter
+from pfb_exporter.builder import PfbBuilder
 
 CONTEXT_SETTINGS = dict(help_option_names=['-h', '--help'])
 
@@ -54,21 +54,24 @@ def common_args_options(func):
     # Db connection url
     func = click.option(
         '--database_url', '-d',
+        default=None,
         help='The connection URL to the database from which SQLAlchemy models '
         'will be generated')(func)
+
+    func = click.argument(
+        'data_dir',
+        type=click.Path(exists=True, file_okay=True, dir_okay=True))(func)
 
     return func
 
 
 @click.command()
 @common_args_options
-@click.argument('data_dir',
-                type=click.Path(exists=True, file_okay=True, dir_okay=True))
 def export(
     data_dir, database_url, models_filepath, transform_module, output_dir
 ):
     """
-    Export Kids First data to PFB (Portable Bioinformatics Format)
+    Export relational data to PFB (Portable Bioinformatics Format) file
 
     \b
     Arguments:
@@ -76,17 +79,19 @@ def export(
         data_dir - Path to directory containing the JSON payloads which
         conform to the SQLAlchemy models.
     """
-    PfbExporter(
+    PfbBuilder(
         data_dir, database_url, models_filepath, transform_module, output_dir,
     ).export()
 
 
 @click.command('create_schema')
 @common_args_options
-def create_schema(database_url, models_filepath, transform_module, output_dir):
+def create_schema(
+    data_dir, database_url, models_filepath, transform_module, output_dir
+):
     """
-    Transform Kids First relational model into a Gen3 data dictionary, which
-    is a required input for PFB file creation.
+    Transform the relational model into a PFB Schema, which is required to
+    create the PFB file
 
     \b
     Arguments:
@@ -95,7 +100,7 @@ def create_schema(database_url, models_filepath, transform_module, output_dir):
         conform to the sqlalchemy models.
     """
 
-    PfbExporter(
+    PfbBuilder(
         '', database_url, models_filepath, transform_module, output_dir
     ).export(output_to_pfb=False)
 

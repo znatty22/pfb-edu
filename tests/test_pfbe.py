@@ -34,7 +34,7 @@ def test_create_schema():
     runner = CliRunner()
     result = runner.invoke(
         cli.create_schema,
-        ['-m', model_dir, '-o', OUTPUT_DIR]
+        [DATA_DIR, '-m', model_dir, '-o', OUTPUT_DIR]
     )
 
     assert result.exit_code == 0

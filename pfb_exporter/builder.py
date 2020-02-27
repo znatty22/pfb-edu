@@ -32,15 +32,11 @@ from pfb_exporter.config import (
     DEFAULT_MODELS_PATH,
     DEFAULT_TRANFORM_MOD
 )
-from pfb_exporter.utils import (
-    import_module_from_file,
-    import_subclass_from_module,
-    setup_logger
-)
-from pfb_exporter.transform.base import Transformer
+from pfb_exporter.utils import setup_logger
+from pfb_exporter.transform.sqla import SqlaTransformer
 
 
-class PfbExporter(object):
+class PfbBuilder(object):
 
     def __init__(
         self,
@@ -61,29 +57,20 @@ class PfbExporter(object):
         self.pfb_file = os.path.join(output_dir, DEFAULT_PFB_FILE)
 
         # Relational model to PFB Schema transformer
-        self.transformer = None
-
-        # Import transformer subclass class from transform module
-        mod = import_module_from_file(transform_module_filepath)
-        child_classes = import_subclass_from_module(Transformer, mod)
-
-        if not child_classes:
-            raise NotImplementedError(
-                f'Transform module {transform_module_filepath} must implement '
-                f'a class which extends the abstract base class '
-                f'{os.path.abspath(mod.__file__)}. + {Transformer.__name__}'
-            )
-        else:
-            self.transformer = child_classes[0](
-                self.models_filepath, self.output_dir, db_conn_url=db_conn_url
-            )
+        self.transformer = SqlaTransformer(
+            self.data_dir,
+            self.models_filepath,
+            self.output_dir,
+            db_conn_url=db_conn_url
+        )
 
     def export(self, output_to_pfb=True):
         """
-        Create a PFB file containing JSON payloads which conform to a
-        relational model
+        Entry point to create a PFB file containing data from a relational
+        database
 
-        - Transform the relational model into a PFB Schema
+        - (Optional) Inspect DB and generate the SQLAlchemy models
+        - Transform the models into a PFB Schema
         - Transform the data into PFB Entities
         - Create an Avro file with the PFB schema and Entities
 
@@ -93,10 +80,15 @@ class PfbExporter(object):
         """
         try:
             # Transform relational model to PFB Schema
-            self.transformer.transform()
+            pfb_schema = self.transformer.create_schema()
+
+            # Transform relational data to PFB Entity JSON objects
+            pfb_entities = self.transformer.create_entities()
+
             # Create the PFB file from the PFB Schema and data
             if output_to_pfb:
-                self._create_pfb()
+                self._build_pfb(pfb_schema, pfb_entities)
+
         except Exception as e:
             self.logger.exception(str(e))
             self.logger.info(f'❌ Export to PFB file {self.pfb_file} failed!')
@@ -106,9 +98,11 @@ class PfbExporter(object):
                 f'✅ Export to PFB file {self.pfb_file} succeeded!'
             )
 
-    def _create_pfb(self):
+    def _build_pfb(self, pfb_schema, pfb_entities):
         """
-        Create a PFB file from a Gen3 PFB Schema and JSON payloads
+        Create a PFB file from a PFB Schema and PFB Entity JSON objects
         """
+        # TODO
         # Add schema to temporary avro file
-        pass
+
+        # Add data records
