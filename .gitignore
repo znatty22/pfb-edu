@@ -127,3 +127,7 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+kf-api-dataservice/
+*.avro
+pfb_export/
