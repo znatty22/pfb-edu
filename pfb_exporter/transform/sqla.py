@@ -5,15 +5,34 @@ import os
 import logging
 import inspect
 import subprocess
+from collections import defaultdict
 import timeit
-from pprint import pprint, pformat
+from pprint import pformat
 
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.inspection import inspect as sqla_inspect
-from sqlalchemy.exc import NoInspectionAvailable
+from sqlalchemy.orm.properties import ColumnProperty
 from sqlalchemy.ext.declarative.api import DeclarativeMeta
+from sqlalchemy.exc import NoInspectionAvailable
 
 from pfb_exporter.utils import import_module_from_file, seconds_to_hms
 from pfb_exporter.transform.base import Transformer
+
+SQLA_AVRO_TYPE_MAP = {
+    'primitive': {
+        'Text': 'string',
+        'Boolean': 'boolean',
+        'Float': 'float',
+        'Integer': 'int',
+        'String': 'string',
+        'UUID': 'string',
+        'DateTime': 'string',
+    },
+    'logical': {
+        'UUID': 'uuid',
+        'DateTime': None
+    }
+}
 
 
 class SqlaTransformer(Transformer):
@@ -62,9 +81,7 @@ class SqlaTransformer(Transformer):
                 'provide a dir or file path to where the models reside'
             )
 
-        self._create_pfb_schema()
-
-        return {}
+        return self._create_pfb_schema()
 
     def _generate_models(self):
         """
@@ -156,4 +173,60 @@ class SqlaTransformer(Transformer):
         )
 
     def _create_pfb_schema(self):
-        pass
+        """
+        Transform SQLAlchemy models into PFB schema
+        """
+        self.logger.info('Creating PFB schema from SQLAlchemy models ...')
+        relational_model = {}
+
+        for model_name, model_cls in self.model_dict.items():
+            self.logger.info(
+                f'Building schema for {model_name} ...'
+            )
+            # Inspect model columns and types
+            for p in sqla_inspect(model_cls).iterate_properties:
+                model_schema = defaultdict(list)
+
+                if not isinstance(p, ColumnProperty):
+                    continue
+
+                if not hasattr(p, 'columns'):
+                    continue
+
+                column_obj = p.columns[0]
+
+                # Check if foreign key
+                if column_obj.foreign_keys:
+                    fkname = column_obj.foreign_keys.pop().target_fullname
+                    model_schema['foreign_keys'].append(
+                        {'table': fkname.split('.')[0], 'name': p.key}
+                    )
+
+                # Convert SQLAlchemy column type to avro type
+                stype = type(column_obj.type).__name__
+                # Get avro primitive type
+                ptype = SQLA_AVRO_TYPE_MAP['primitive'].get(stype)
+                if not ptype:
+                    self.logger.warn(
+                        f'⚠️ Could not find avro type for {p}, '
+                        f'SQLAlchemy type: {stype}'
+                    )
+                attr_dict = {'name': p.key, 'type': ptype}
+
+                # Get avro logical type if applicable
+                ltype = SQLA_AVRO_TYPE_MAP['logical'].get(stype)
+                if ltype:
+                    attr_dict.update({'logicalType': ltype})
+
+                # Get default value for attr
+                # if column_obj.default:
+                #     attr_dict.update({'default': column_obj.default})
+
+                # if column_obj.nullable:
+                #     attr_dict.update({'nullable': column_obj.nullable})
+
+                model_schema['attributes'].append(attr_dict)
+
+            relational_model[model_cls.__tablename__] = model_schema
+
+        return relational_model

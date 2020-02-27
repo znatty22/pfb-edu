@@ -55,7 +55,7 @@ class Transformer(ABC):
         )
         if data:
             self.logger.info(
-                f'Writing PFB schema to {self.pfb_schema}'
+                f'✏️ Writing PFB schema to {self.pfb_schema}'
             )
             with open(self.pfb_schema, 'w') as json_file:
                 json.dump(data, json_file, indent=4, sort_keys=True)
