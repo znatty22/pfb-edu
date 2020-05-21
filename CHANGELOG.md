@@ -1,5 +1,17 @@
 #  Change History
 
+## Release 0.2.0
+
+### Summary
+
+- Emojis: 🔧 x1
+- Categories: Other Changes x1
+
+### New features and changes
+
+- [#4](https://github.com/znatty22/pfb-edu/pull/4) - 🔧 Add release scripts - [afb3bf7a](https://github.com/znatty22/pfb-edu/commit/afb3bf7ad3084d68e85e5b36f3f9a8911260684f) by [znatty22](https://github.com/znatty22)
+
+
 ## Release 0.1.0
 
 ### Summary
