@@ -1,5 +1,17 @@
 #  Change History
 
+## Release 0.3.0
+
+### Summary
+
+- Emojis: 🐛 x1
+- Categories: Fixes x1
+
+### New features and changes
+
+- [#6](https://github.com/znatty22/pfb-edu/pull/6) - 🐛 Fix prep asset script - [13de157c](https://github.com/znatty22/pfb-edu/commit/13de157ce1a9715e3b683546522a6a1b9c513d00) by [znatty22](https://github.com/znatty22)
+
+
 ## Release 0.2.0
 
 ### Summary
