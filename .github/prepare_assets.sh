@@ -9,5 +9,5 @@ echo "New version: $VERSION"
 mkdir assets
 echo "my_asset" > assets/my_asset.txt
 tar zcvf assets.tar.gz assets
-echo "assets.tar.gz" > release_assets.txt
+echo "assets.tar.gz" > .github/release_assets.txt
 
